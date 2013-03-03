@@ -1,0 +1,44 @@
+#!/sbin/runscript
+
+
+depend() {
+    need localmount swap
+    after bootmisc modules
+}
+
+
+start() {
+    # Load the kernel module
+    NRDEVICES=$(grep -c ^processor /proc/cpuinfo | sed 's/^0$/1/')
+    if modinfo zram | grep -q ' zram_num_devices:' 2>/dev/null; then
+        MODPROBE_ARGS="zram_num_devices=${NRDEVICES}"
+    elif modinfo zram | grep -q ' num_devices:' 2>/dev/null; then
+        MODPROBE_ARGS="num_devices=${NRDEVICES}"
+    else
+        exit 1
+    fi
+    modprobe zram $MODPROBE_ARGS
+
+    # Determine the size of zRam (equal to the amount of RAM)
+    # Note that this is uncompressed
+    totalmem=`free | grep -e "^Mem:" | sed -e 's/^Mem: *//' -e 's/  *.*//'`
+    mem=$(((totalmem / ${NRDEVICES}) * 1024))
+
+    # initialize the devices
+    for i in $(seq ${NRDEVICES}); do
+        DEVNUMBER=$((i - 1))
+        echo $mem > /sys/block/zram${DEVNUMBER}/disksize
+        mkswap /dev/zram${DEVNUMBER}
+        swapon -p 5 /dev/zram${DEVNUMBER}
+    done
+}
+
+
+stop() {
+    if DEVICES=$(grep zram /proc/swaps | awk '{print $1}'); then
+        for i in $DEVICES; do
+            swapoff $i
+        done
+    fi
+    rmmod -w zram
+}
